@@ -170,7 +170,11 @@ with col1:
 with col2:
     unit_input = st.text_input("Unit number", placeholder="#12-34")
 
-prop_attrs = None
+prop_attrs   = None
+loc_features = {}
+addr_lat, addr_lon = None, None
+mrt_df    = load_mrt()
+school_df = load_schools()
 
 if address_input:
     with st.spinner("Looking up address…"):
@@ -181,6 +185,8 @@ if address_input:
         selected_label = st.selectbox("Select the correct address:", list(options.keys()))
         chosen = options[selected_label]
         postal = chosen.get("POSTAL", "").strip()
+        addr_lat = float(chosen.get("LATITUDE") or 0)
+        addr_lon = float(chosen.get("LONGITUDE") or 0)
         if postal and postal != "NIL":
             postal_dict = load_postal_lookup()
             prop_attrs  = postal_dict.get(postal.zfill(6))
@@ -191,6 +197,17 @@ if address_input:
             c1.metric("Market Segment", prop_attrs["Market segment"])
             c2.metric("Tenure",         prop_attrs["Tenure Group"])
             c3.metric("Completion",     prop_attrs.get("Completion Bucket", "Unknown"))
+
+            # Compute MRT + school distances from lat/lon
+            if addr_lat and mrt_df is not None:
+                loc_features = compute_location_features(addr_lat, addr_lon, mrt_df, school_df)
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Nearest MRT", loc_features.get("Nearest MRT", "N/A"),
+                          f"{loc_features.get('MRT Distance (km)', 0):.2f} km")
+                m2.metric("Nearest Top School", loc_features.get("Nearest Top School", "N/A"),
+                          f"{loc_features.get('Top School Distance (km)', 0):.2f} km")
+                m3.metric("Top School within 1km", "Yes" if loc_features.get("Top School 1km") else "No")
+                m4.metric("Top School within 2km", "Yes" if loc_features.get("Top School 2km") else "No")
         else:
             st.warning("Postal code not in lookup. Fill in details manually below.")
     else:
@@ -270,6 +287,11 @@ if run_btn:
         "Sale Month"                 : sale_month,
         "Sale Quarter"               : sale_quarter,
         "Floor Level"                : floor_level,
+        # Location features (0 if enrichment not yet run)
+        "MRT Distance (km)"          : loc_features.get("MRT Distance (km)", 0),
+        "Top School Distance (km)"   : loc_features.get("Top School Distance (km)", 0),
+        "Top School 1km"             : loc_features.get("Top School 1km", 0),
+        "Top School 2km"             : loc_features.get("Top School 2km", 0),
     }
 
     # Run all 3 models
