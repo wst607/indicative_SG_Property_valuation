@@ -4,15 +4,31 @@ SG Indicative Valuation Tool — Streamlit App
 Run locally:
     streamlit run nmrk_valuation_app.py
 
+Model architecture: 2 sale types × 4 time periods = 8 models
+  Sale types : resale, newsale  (Sub Sale routes to newsale)
+  Periods    : 6m, 1y, 18m, 3y
+
 Files needed in the same folder:
-    rf_model_6m.pkl, rf_model_1y.pkl, rf_model_3y.pkl
-    le_dict_6m.pkl, le_dict_1y.pkl, le_dict_3y.pkl
-    feature_cols_6m.json, feature_cols_1y.json, feature_cols_3y.json
-    predictions_sample_6m.csv, predictions_sample_1y.csv, predictions_sample_3y.csv
+    rf_model_resale_6m.pkl       rf_model_newsale_6m.pkl
+    rf_model_resale_1y.pkl       rf_model_newsale_1y.pkl
+    rf_model_resale_18m.pkl      rf_model_newsale_18m.pkl
+    rf_model_resale_3y.pkl       rf_model_newsale_3y.pkl
+    le_dict_resale_*.pkl         le_dict_newsale_*.pkl
+    feature_cols_resale_*.json   feature_cols_newsale_*.json
+    predictions_sample_resale_*.csv  predictions_sample_newsale_*.csv
+    comparables_resale_*.csv     comparables_newsale_*.csv
     postal_lookup.csv
-    mrt_stations.csv       (optional — for MRT distance)
-    primary_schools.csv    (optional — for school proximity)
-    gls_pipeline.csv       (optional — for GLS supply context)
+    mrt_stations.csv             (optional — for MRT distance)
+    primary_schools.csv          (optional — for school proximity)
+    gls_pipeline.csv             (optional — for GLS supply context)
+
+Valuer feedback → Google Sheets:
+    Set up st.secrets (see README) with:
+        [gsheets]
+        spreadsheet_id = "YOUR_SHEET_ID"
+        [gcp_service_account]
+        type = "service_account"
+        ... (full service account JSON fields)
 """
 
 import streamlit as st
@@ -34,41 +50,61 @@ st.set_page_config(
 BASE = Path(__file__).parent
 POSTAL_CSV = BASE / "postal_lookup.csv"
 
-MODEL_FILES = {
-    "6 Months": {
-        "model"      : BASE / "rf_model_6m.pkl",
-        "encoders"   : BASE / "le_dict_6m.pkl",
-        "features"   : BASE / "feature_cols_6m.json",
-        "predictions": BASE / "predictions_sample_6m.csv",
-        "comparables": BASE / "comparables_6m.csv",
-    },
-    "1 Year": {
-        "model"      : BASE / "rf_model_1y.pkl",
-        "encoders"   : BASE / "le_dict_1y.pkl",
-        "features"   : BASE / "feature_cols_1y.json",
-        "predictions": BASE / "predictions_sample_1y.csv",
-        "comparables": BASE / "comparables_1y.csv",
-    },
-    "18 Months": {
-        "model"      : BASE / "rf_model_18m.pkl",
-        "encoders"   : BASE / "le_dict_18m.pkl",
-        "features"   : BASE / "feature_cols_18m.json",
-        "predictions": BASE / "predictions_sample_18m.csv",
-        "comparables": BASE / "comparables_18m.csv",
-    },
-    "3 Years": {
-        "model"      : BASE / "rf_model_3y.pkl",
-        "encoders"   : BASE / "le_dict_3y.pkl",
-        "features"   : BASE / "feature_cols_3y.json",
-        "predictions": BASE / "predictions_sample_3y.csv",
-        "comparables": BASE / "comparables_3y.csv",
-    },
-}
+# ── Constants ──────────────────────────────────────────────────────────────────
+TENURE_OPTS   = ["Freehold", "999-yr", "99-yr", "Other"]
+REGION_OPTS   = ["Central Region", "East Region", "North Region", "North-East Region", "West Region"]
+PROPTYPE_OPTS = ["Apartment", "Condominium", "Executive Condominium"]
+SEGMENT_OPTS  = ["CCR", "RCR", "OCR"]
+
+# ── Model file routing ─────────────────────────────────────────────────────────
+
+def get_model_files(sale_type: str) -> dict:
+    """
+    Returns model file paths for the given sale type.
+    sale_type: 'Resale' | 'New Sale' | 'Sub Sale'
+    Sub Sale routes to the newsale models (developer-linked pricing).
+    """
+    key = "resale" if sale_type == "Resale" else "newsale"
+    return {
+        "6 Months": {
+            "model"      : BASE / f"rf_model_{key}_6m.pkl",
+            "encoders"   : BASE / f"le_dict_{key}_6m.pkl",
+            "features"   : BASE / f"feature_cols_{key}_6m.json",
+            "predictions": BASE / f"predictions_sample_{key}_6m.csv",
+            "comparables": BASE / f"comparables_{key}_6m.csv",
+        },
+        "1 Year": {
+            "model"      : BASE / f"rf_model_{key}_1y.pkl",
+            "encoders"   : BASE / f"le_dict_{key}_1y.pkl",
+            "features"   : BASE / f"feature_cols_{key}_1y.json",
+            "predictions": BASE / f"predictions_sample_{key}_1y.csv",
+            "comparables": BASE / f"comparables_{key}_1y.csv",
+        },
+        "18 Months": {
+            "model"      : BASE / f"rf_model_{key}_18m.pkl",
+            "encoders"   : BASE / f"le_dict_{key}_18m.pkl",
+            "features"   : BASE / f"feature_cols_{key}_18m.json",
+            "predictions": BASE / f"predictions_sample_{key}_18m.csv",
+            "comparables": BASE / f"comparables_{key}_18m.csv",
+        },
+        "3 Years": {
+            "model"      : BASE / f"rf_model_{key}_3y.pkl",
+            "encoders"   : BASE / f"le_dict_{key}_3y.pkl",
+            "features"   : BASE / f"feature_cols_{key}_3y.json",
+            "predictions": BASE / f"predictions_sample_{key}_3y.csv",
+            "comparables": BASE / f"comparables_{key}_3y.csv",
+        },
+    }
+
+# Placeholder — replaced at runtime based on sale type selection
+MODEL_FILES = get_model_files("Resale")
 
 CAT_COLS = [
-    "Project Name", "Type of Sale", "Type of Area", "Property Type",
-    "Purchaser Address Indicator", "Planning Region", "Planning Area",
+    "Project Name", "Type of Area", "Property Type",
+    "Planning Region", "Planning Area",
     "Market segment", "Tenure Group", "Completion Bucket",
+    # Type of Sale removed — redundant in segmented models
+    # Purchaser Address Indicator removed — not a property trait
 ]
 
 EXTRA_LOC_FEATURES = [
@@ -84,6 +120,15 @@ GLS_FEATURES = [
     "GLS Units Area",
     "GLS Avg psf ppr Segment",
 ]
+
+# ── Completion bucket helper ───────────────────────────────────────────────────
+
+def derive_completion_bucket(year: int) -> str:
+    if year <= 0:    return "Unknown"
+    if year < 2000:  return "Pre-2000"
+    if year < 2010:  return "2000-2009"
+    if year < 2020:  return "2010-2019"
+    return "2020+"
 
 # ── Cached loaders ─────────────────────────────────────────────────────────────
 
@@ -165,34 +210,25 @@ def get_comparables(period_key, project_name, planning_area, market_segment, are
     df["Planning Area"] = df["Planning Area"].str.strip().str.title()
     df["Market segment"] = df["Market segment"].str.strip().str.upper()
 
-    # Score each transaction by relevance
     area_lo, area_hi = area_sqft * 0.7, area_sqft * 1.3
 
-    # Tier 1: same project, similar size
     t1 = df[
         (df["Project Name"].str.upper() == project_name.strip().upper()) &
         (df["Area (SQFT)"] >= area_lo) & (df["Area (SQFT)"] <= area_hi)
     ].copy()
-
-    # Tier 2: same project, any size
     t2 = df[
         (df["Project Name"].str.upper() == project_name.strip().upper())
     ].copy()
-
-    # Tier 3: same planning area, similar size, same segment
     t3 = df[
         (df["Planning Area"].str.lower() == planning_area.strip().lower()) &
         (df["Market segment"] == market_segment.strip().upper()) &
         (df["Area (SQFT)"] >= area_lo) & (df["Area (SQFT)"] <= area_hi)
     ].copy()
-
-    # Tier 4: same segment, similar size
     t4 = df[
         (df["Market segment"] == market_segment.strip().upper()) &
         (df["Area (SQFT)"] >= area_lo) & (df["Area (SQFT)"] <= area_hi)
     ].copy()
 
-    # Build result — fill from tiers until we have n rows
     seen = set()
     rows = []
     for tier in [t1, t2, t3, t4]:
@@ -373,6 +409,60 @@ def predict(period_key, row, feature_cols_override=None):
 
     return psf, lo, hi
 
+# ── Google Sheets feedback writer ─────────────────────────────────────────────
+
+def write_feedback_to_sheets(record: dict) -> tuple[bool, str]:
+    """
+    Appends one row to the Google Sheet configured in st.secrets.
+    Returns (success: bool, message: str).
+    Requires st.secrets:
+        [gsheets]
+        spreadsheet_id = "..."
+        [gcp_service_account]
+        type = "service_account"
+        project_id = "..."
+        private_key_id = "..."
+        private_key = "..."
+        client_email = "..."
+        client_id = "..."
+        auth_uri = "..."
+        token_uri = "..."
+    """
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+    except ImportError:
+        return False, "gspread not installed. Run: pip install gspread google-auth"
+
+    try:
+        secrets = st.secrets
+        creds_dict = dict(secrets["gcp_service_account"])
+        spreadsheet_id = secrets["gsheets"]["spreadsheet_id"]
+    except Exception:
+        return False, (
+            "Google Sheets not configured. Add your service account credentials "
+            "to .streamlit/secrets.toml (see setup instructions)."
+        )
+
+    try:
+        scopes = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds  = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        sheet  = client.open_by_key(spreadsheet_id).sheet1
+
+        # Write header row if sheet is empty
+        if sheet.row_count == 0 or not sheet.get_all_values():
+            headers = list(record.keys())
+            sheet.append_row(headers, value_input_option="USER_ENTERED")
+
+        sheet.append_row(list(record.values()), value_input_option="USER_ENTERED")
+        return True, "Feedback recorded successfully."
+    except Exception as e:
+        return False, f"Failed to write to Google Sheets: {e}"
+
 # ── Check files ────────────────────────────────────────────────────────────────
 
 if not POSTAL_CSV.exists():
@@ -439,34 +529,60 @@ if address_input:
         st.warning("Address not found via OneMap. Fill in details manually below.")
 
 # ── Manual override ────────────────────────────────────────────────────────────
+# Tenure: heuristic mapping from Completion Bucket for year hint
+_BUCKET_TO_YEAR = {
+    "Pre-2000": 1995, "2000-2009": 2005, "2010-2019": 2015,
+    "2020+": 2022, "Uncompleted": 2026, "Unknown": 2015,
+}
+
 with st.expander("Override or fill in property details manually", expanded=(prop_attrs is None)):
-    regions = ["Central Region","East Region","North Region","North-East Region","West Region"]
-    man_project    = st.text_input("Project Name",    value=prop_attrs["Project Name"]     if prop_attrs else "")
-    man_region     = st.selectbox("Planning Region",  regions,
-                                  index=regions.index(prop_attrs["Planning Region"]) if prop_attrs and prop_attrs["Planning Region"] in regions else 0)
-    man_area       = st.text_input("Planning Area",   value=prop_attrs["Planning Area"]    if prop_attrs else "")
-    man_segment    = st.selectbox("Market Segment",   ["CCR","RCR","OCR"],
-                                  index=["CCR","RCR","OCR"].index(prop_attrs["Market segment"]) if prop_attrs else 1)
-    man_proptype   = st.selectbox("Property Type",    ["Apartment","Condominium","Executive Condominium"],
-                                  index=["Apartment","Condominium","Executive Condominium"].index(prop_attrs["Property Type"]) if prop_attrs else 1)
-    man_tenure     = st.selectbox("Tenure",           ["Freehold","999-yr","99-yr","Other"],
-                                  index=["Freehold","999-yr","99-yr","Other"].index(prop_attrs["Tenure Group"]) if prop_attrs else 2)
-    man_completion = st.selectbox("Completion Period",["Pre-2000","2000-2009","2010-2019","2020+","Uncompleted"],
-                                  index=["Pre-2000","2000-2009","2010-2019","2020+","Uncompleted"].index(prop_attrs.get("Completion Bucket","2010-2019")) if prop_attrs and prop_attrs.get("Completion Bucket","Unknown") not in ("Unknown","") else 2)
-    man_completion_year = st.number_input("Completion Year (exact)", min_value=1970, max_value=2030,
-                                          value=int(prop_attrs.get("Completion Year", 2015)) if prop_attrs and prop_attrs.get("Completion Year") else 2015,
-                                          step=1,
-                                          help="Enter the actual year the development was completed. Used to compute property age.")
+    man_project = st.text_input("Project Name", value=prop_attrs["Project Name"] if prop_attrs else "")
+    man_region  = st.selectbox(
+        "Planning Region", REGION_OPTS,
+        index=REGION_OPTS.index(prop_attrs["Planning Region"])
+              if prop_attrs and prop_attrs.get("Planning Region") in REGION_OPTS else 0
+    )
+    man_area    = st.text_input("Planning Area", value=prop_attrs["Planning Area"] if prop_attrs else "")
+    man_segment = st.selectbox(
+        "Market Segment", SEGMENT_OPTS,
+        index=SEGMENT_OPTS.index(prop_attrs["Market segment"])
+              if prop_attrs and prop_attrs.get("Market segment") in SEGMENT_OPTS else 1
+    )
+    man_proptype = st.selectbox(
+        "Property Type", PROPTYPE_OPTS,
+        index=PROPTYPE_OPTS.index(prop_attrs["Property Type"])
+              if prop_attrs and prop_attrs.get("Property Type") in PROPTYPE_OPTS else 1
+    )
+    # Tenure — always populated from lookup; fall back to 99-yr if not found
+    _tenure_default = (
+        prop_attrs["Tenure Group"]
+        if prop_attrs and prop_attrs.get("Tenure Group") in TENURE_OPTS
+        else "99-yr"
+    )
+    man_tenure = st.selectbox(
+        "Tenure", TENURE_OPTS,
+        index=TENURE_OPTS.index(_tenure_default)
+    )
+    # Completion Year — bucket auto-derived; no separate dropdown needed
+    _bucket = prop_attrs.get("Completion Bucket", "Unknown") if prop_attrs else "Unknown"
+    _year_hint = _BUCKET_TO_YEAR.get(_bucket, 2015)
+    man_completion_year = st.number_input(
+        "Completion Year", min_value=1970, max_value=2030,
+        value=_year_hint, step=1,
+        help="Enter the actual year the development was completed. Completion period is derived automatically."
+    )
+    # Auto-derive bucket from year (no dropdown shown to user)
+    man_completion_bucket = derive_completion_bucket(int(man_completion_year))
 
     final_attrs = {
-        "Project Name"        : man_project,
-        "Planning Region"     : man_region,
-        "Planning Area"       : man_area,
-        "Market segment"      : man_segment,
-        "Property Type"       : man_proptype,
-        "Tenure Group"        : man_tenure,
-        "Completion Bucket"   : man_completion,
-        "Completion Year"     : int(man_completion_year),
+        "Project Name"     : man_project,
+        "Planning Region"  : man_region,
+        "Planning Area"    : man_area,
+        "Market segment"   : man_segment,
+        "Property Type"    : man_proptype,
+        "Tenure Group"     : man_tenure,
+        "Completion Bucket": man_completion_bucket,
+        "Completion Year"  : int(man_completion_year),
     }
 
 st.divider()
@@ -483,7 +599,7 @@ with col2:
 with col3:
     sale_month   = st.selectbox("Sale Month", list(range(1,13)), index=now.month-1)
 
-type_of_sale = st.radio("Type of Sale", ["Resale","New Sale","Sub Sale"], horizontal=True)
+type_of_sale = st.radio("Type of Sale", ["Resale", "New Sale", "Sub Sale"], horizontal=True)
 
 st.divider()
 
@@ -511,7 +627,7 @@ if gls_data is not None and final_attrs.get("Market segment"):
                                    "Est Units", "Land psf ppr", "Launch From", "Launch To", "No. of Bids"]
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-# ── Run all 3 models ───────────────────────────────────────────────────────────
+# ── Run all 4 models ───────────────────────────────────────────────────────────
 run_btn = st.button("Get Indicative Valuation", type="primary", use_container_width=True)
 
 if run_btn:
@@ -534,28 +650,34 @@ if run_btn:
         gls_data
     )
 
+    # Compute property age
+    completion_yr = final_attrs.get("Completion Year", sale_year)
+    prop_age = max(0, min(60, sale_year - int(completion_yr))) if completion_yr else 0
+
     row = {
-        "Project Name"               : final_attrs["Project Name"],
-        "Area (SQFT)"                : float(area_sqft),
-        "Type of Sale"               : type_of_sale,
-        "Type of Area"               : "Strata",
-        "Property Type"              : final_attrs["Property Type"],
-        "Planning Region"            : final_attrs["Planning Region"],
-        "Planning Area"              : final_attrs["Planning Area"],
-        "Market segment"             : final_attrs["Market segment"],
-        "Tenure Group"               : final_attrs["Tenure Group"],
-        "Completion Bucket"          : final_attrs["Completion Bucket"],
-        "Sale Year"                  : sale_year,
-        "Sale Month"                 : sale_month,
-        "Sale Quarter"               : sale_quarter,
-        "Floor Level"                : floor_level,
+        "Project Name"              : final_attrs["Project Name"],
+        "Area (SQFT)"               : float(area_sqft),
+        "Type of Area"              : "Strata",
+        "Property Type"             : final_attrs["Property Type"],
+        "Planning Region"           : final_attrs["Planning Region"],
+        "Planning Area"             : final_attrs["Planning Area"],
+        "Market segment"            : final_attrs["Market segment"],
+        "Tenure Group"              : final_attrs["Tenure Group"],
+        "Completion Bucket"         : final_attrs["Completion Bucket"],
+        "Sale Year"                 : sale_year,
+        "Sale Month"                : sale_month,
+        "Sale Quarter"              : sale_quarter,
+        "Floor Level"               : floor_level,
+        "Property Age (Years)"      : prop_age,
         # Location features (0 if enrichment not yet run)
-        "MRT Distance (km)"          : loc_features.get("MRT Distance (km)", 0),
-        "Top School Distance (km)"   : loc_features.get("Top School Distance (km)", 0),
-        "Top School 1km"             : loc_features.get("Top School 1km", 0),
-        "Top School 2km"             : loc_features.get("Top School 2km", 0),
-        # GLS features removed from model — used for display context only
+        "MRT Distance (km)"         : loc_features.get("MRT Distance (km)", 0),
+        "Top School Distance (km)"  : loc_features.get("Top School Distance (km)", 0),
+        "Top School 1km"            : loc_features.get("Top School 1km", 0),
+        "Top School 2km"            : loc_features.get("Top School 2km", 0),
     }
+
+    # Route to correct model set based on sale type
+    MODEL_FILES = get_model_files(type_of_sale)
 
     # Run all 4 models
     with st.spinner("Running all 4 models…"):
@@ -572,8 +694,13 @@ if run_btn:
     avg_hi    = sum(r["hi"] for r in valid) / len(valid) * area_sqft
 
     st.divider()
+    model_type_label = "Resale Model" if type_of_sale == "Resale" else "New Sale Model"
     st.subheader("Indicative Valuation")
-    st.caption(f"{final_attrs['Project Name']}  |  Unit {unit_input} (Floor {floor_level})  |  {area_sqft:,} sqft  |  {type_of_sale}  |  {sale_year} Q{sale_quarter}")
+    st.caption(
+        f"{final_attrs['Project Name']}  |  Unit {unit_input} (Floor {floor_level})  |  "
+        f"{area_sqft:,} sqft  |  {type_of_sale}  |  {sale_year} Q{sale_quarter}  |  "
+        f"Age: {prop_age} yrs  |  {model_type_label}"
+    )
 
     # Headline blended value
     st.markdown(
@@ -617,9 +744,7 @@ if run_btn:
 
     st.divider()
 
-    st.divider()
-
-    # Summary table
+    # ── Property Summary ───────────────────────────────────────────────────────
     st.markdown("**Property Summary**")
     summary = {
         "Project"          : final_attrs["Project Name"],
@@ -628,8 +753,11 @@ if run_btn:
         "Market Segment"   : final_attrs["Market segment"],
         "Location"         : f"{final_attrs['Planning Area']}, {final_attrs['Planning Region']}",
         "Tenure"           : final_attrs["Tenure Group"],
+        "Completion Year"  : str(final_attrs["Completion Year"]),
         "Completion Period": final_attrs["Completion Bucket"],
         "Sale Type"        : f"{type_of_sale} ({sale_year} Q{sale_quarter})",
+        "Property Age"     : f"{prop_age} years",
+        "Model Used"       : model_type_label,
     }
     if loc_features.get("Nearest MRT"):
         summary["Nearest MRT"] = f"{loc_features['Nearest MRT']} ({loc_features['MRT Distance (km)']:.2f} km)"
@@ -661,6 +789,89 @@ if run_btn:
                 st.info("No comparable transactions found for this period.")
             else:
                 st.dataframe(comps, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── Valuer Feedback ────────────────────────────────────────────────────────
+    st.subheader("📋 Valuer Feedback")
+    st.caption(
+        "Record a valuer's independent assessment against this model output. "
+        "Responses are saved to a shared Google Sheet for tracking and calibration."
+    )
+
+    with st.form("valuer_feedback_form", clear_on_submit=True):
+        fb_col1, fb_col2 = st.columns(2)
+        with fb_col1:
+            fb_valuer_name    = st.text_input("Valuer Name", placeholder="e.g. John Tan")
+            fb_valuer_company = st.text_input("Company / Firm", placeholder="e.g. Savills Singapore")
+            fb_valuation      = st.number_input(
+                "Valuer's Assessment (S$)",
+                min_value=100_000, max_value=100_000_000,
+                value=int(avg_total), step=10_000,
+                help="Enter the valuer's independent estimated value in SGD."
+            )
+        with fb_col2:
+            fb_valuation_psf = st.number_input(
+                "Valuer's PSF (S$)",
+                min_value=100, max_value=10_000,
+                value=int(avg_psf), step=10,
+                help="Valuer's assessed price per square foot."
+            )
+            fb_method = st.selectbox(
+                "Valuation Method",
+                ["Direct Comparison", "Income Capitalisation", "Residual", "Cost", "Other"]
+            )
+            fb_notes = st.text_area("Notes / Remarks", placeholder="Any adjustments, market commentary, or context…", height=100)
+
+        # Pre-populated context shown to valuer (read-only via disabled inputs)
+        st.markdown("**Model Context (auto-filled)**")
+        ctx_col1, ctx_col2, ctx_col3, ctx_col4 = st.columns(4)
+        ctx_col1.text_input("Project",        value=final_attrs["Project Name"],      disabled=True)
+        ctx_col2.text_input("Unit",           value=f"{unit_input} (Fl {floor_level})", disabled=True)
+        ctx_col3.text_input("Area (sqft)",    value=str(area_sqft),                   disabled=True)
+        ctx_col4.text_input("Model Output",   value=f"S${avg_total:,.0f}",            disabled=True)
+
+        submitted = st.form_submit_button("Submit Feedback", type="primary")
+
+    if submitted:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        record = {
+            "Timestamp"              : timestamp,
+            "Valuer Name"            : fb_valuer_name,
+            "Company"                : fb_valuer_company,
+            "Project"                : final_attrs["Project Name"],
+            "Unit"                   : unit_input,
+            "Floor"                  : floor_level,
+            "Area (sqft)"            : area_sqft,
+            "Planning Area"          : final_attrs["Planning Area"],
+            "Market Segment"         : final_attrs["Market segment"],
+            "Tenure"                 : final_attrs["Tenure Group"],
+            "Completion Year"        : final_attrs["Completion Year"],
+            "Property Age (yrs)"     : prop_age,
+            "Sale Type"              : type_of_sale,
+            "Sale Year"              : sale_year,
+            "Sale Quarter"           : sale_quarter,
+            "Model Blended (S$)"     : round(avg_total),
+            "Model PSF (S$)"         : round(avg_psf),
+            "Model 6m (S$)"          : round(results_all["6 Months"]["psf"] * area_sqft) if results_all["6 Months"]["psf"] else "",
+            "Model 1y (S$)"          : round(results_all["1 Year"]["psf"] * area_sqft)   if results_all["1 Year"]["psf"]   else "",
+            "Model 18m (S$)"         : round(results_all["18 Months"]["psf"] * area_sqft) if results_all["18 Months"]["psf"] else "",
+            "Model 3y (S$)"          : round(results_all["3 Years"]["psf"] * area_sqft)  if results_all["3 Years"]["psf"]  else "",
+            "Valuer Assessment (S$)" : fb_valuation,
+            "Valuer PSF (S$)"        : fb_valuation_psf,
+            "Diff vs Model (S$)"     : fb_valuation - round(avg_total),
+            "Diff vs Model (%)"      : round((fb_valuation - avg_total) / avg_total * 100, 2),
+            "Valuation Method"       : fb_method,
+            "Notes"                  : fb_notes,
+        }
+        ok, msg = write_feedback_to_sheets(record)
+        if ok:
+            st.success(f"✅ {msg}")
+        else:
+            st.error(f"⚠️ {msg}")
+            # Fallback: show the record so it can be manually copied
+            with st.expander("Copy this record manually"):
+                st.json(record)
 
     st.divider()
     st.markdown(
