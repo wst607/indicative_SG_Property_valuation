@@ -319,7 +319,7 @@ def compute_location_features(lat, lon, mrt_df, school_df):
         )
         nearest = mrt_df.loc[mrt_df["dist"].idxmin()]
         features["MRT Distance (km)"] = round(nearest["dist"], 3)
-        features["Nearest MRT"] = nearest["Station Name"]
+        features["Nearest MRT"] = nearest["Station"]
 
     if school_df is not None and lat and lon:
         top = school_df[school_df["Top School"] == 1].copy()
