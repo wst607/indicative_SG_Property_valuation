@@ -72,6 +72,7 @@ def get_model_files(sale_type: str) -> dict:
             "features"   : BASE / f"feature_cols_{key}_6m.json",
             "predictions": BASE / f"predictions_sample_{key}_6m.csv",
             "comparables": BASE / f"comparables_{key}_6m.csv",
+            "project_te" : BASE / f"project_te_{key}_6m.json",
         },
         "1 Year": {
             "model"      : BASE / f"rf_model_{key}_1y.pkl",
@@ -79,6 +80,7 @@ def get_model_files(sale_type: str) -> dict:
             "features"   : BASE / f"feature_cols_{key}_1y.json",
             "predictions": BASE / f"predictions_sample_{key}_1y.csv",
             "comparables": BASE / f"comparables_{key}_1y.csv",
+            "project_te" : BASE / f"project_te_{key}_1y.json",
         },
         "18 Months": {
             "model"      : BASE / f"rf_model_{key}_18m.pkl",
@@ -86,6 +88,7 @@ def get_model_files(sale_type: str) -> dict:
             "features"   : BASE / f"feature_cols_{key}_18m.json",
             "predictions": BASE / f"predictions_sample_{key}_18m.csv",
             "comparables": BASE / f"comparables_{key}_18m.csv",
+            "project_te" : BASE / f"project_te_{key}_18m.json",
         },
         "3 Years": {
             "model"      : BASE / f"rf_model_{key}_3y.pkl",
@@ -93,6 +96,7 @@ def get_model_files(sale_type: str) -> dict:
             "features"   : BASE / f"feature_cols_{key}_3y.json",
             "predictions": BASE / f"predictions_sample_{key}_3y.csv",
             "comparables": BASE / f"comparables_{key}_3y.csv",
+            "project_te" : BASE / f"project_te_{key}_3y.json",
         },
     }
 
@@ -100,7 +104,8 @@ def get_model_files(sale_type: str) -> dict:
 MODEL_FILES = get_model_files("Resale")
 
 CAT_COLS = [
-    "Project Name", "Type of Area", "Property Type",
+    # Project Name excluded — target encoded separately (project_te_*.json)
+    "Type of Area", "Property Type",
     "Planning Region", "Planning Area",
     "Market segment", "Tenure Group", "Completion Bucket",
     # Type of Sale removed — redundant in segmented models
@@ -178,7 +183,30 @@ def load_gls():
         return df
     return None
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
+def load_project_te(path):
+    """Load project target-encoding map from JSON. Returns (map_dict, global_median)."""
+    p = Path(path)
+    if p.exists():
+        with open(p) as f:
+            data = json.load(f)
+        return data.get("map", {}), data.get("global_median", 0.0)
+    return {}, 0.0
+
+
+def apply_project_te(te_map: dict, global_median: float, project_name: str) -> float:
+    """Map a project name to its target-encoded PSF value."""
+    name = str(project_name).strip().upper()
+    # Try exact match (map keys are uppercase)
+    if name in te_map:
+        return float(te_map[name])
+    # Case-insensitive fallback
+    lower_map = {k.lower(): v for k, v in te_map.items()}
+    if name.lower() in lower_map:
+        return float(lower_map[name.lower()])
+    return float(global_median)
+
+
 def load_residuals(path):
     p = Path(path)
     if p.exists():
@@ -384,7 +412,9 @@ def encode_value(le, value: str) -> int:
 def predict(period_key, row, feature_cols_override=None):
     """Run prediction for a given period. Returns (psf, lo, hi) or None."""
     files = MODEL_FILES[period_key]
-    missing = [k for k, v in files.items() if not v.exists()]
+    # project_te may not exist yet (pre-retrain), so only check core files
+    core_keys = ["model", "encoders", "features", "predictions"]
+    missing = [k for k in core_keys if not files[k].exists()]
     if missing:
         return None, None, None
     model        = load_model(str(files["model"]))
@@ -392,9 +422,15 @@ def predict(period_key, row, feature_cols_override=None):
     feature_cols = load_feature_cols(str(files["features"]))
     res_lo, res_hi = load_residuals(str(files["predictions"]))
 
+    # Load project target encoding map (new — replaces label encoding for Project Name)
+    te_map, te_global = load_project_te(str(files["project_te"]))
+
     encoded = {}
     for col in feature_cols:
-        if col in CAT_COLS:
+        if col == "Project Name TE":
+            # Target-encoded feature: map project name to median PSF of that project
+            encoded[col] = apply_project_te(te_map, te_global, row.get("Project Name", ""))
+        elif col in CAT_COLS:
             encoded[col] = encode_value(le_dict[col], row.get(col, "Unknown"))
         else:
             encoded[col] = row.get(col, 0)
@@ -785,10 +821,21 @@ if st.session_state.get("val_ready"):
     st.divider()
 
     st.subheader("Comparable Transactions")
-    st.caption(
-        "Most recent transactions used from each training period. "
-        "Prioritised by: same project → same area + similar size → same segment."
-    )
+    comp_hdr_col, comp_sel_col = st.columns([3, 1])
+    with comp_hdr_col:
+        st.caption(
+            "Most recent transactions used from each training period. "
+            "Prioritised by: same project → same area + similar size → same segment."
+        )
+    with comp_sel_col:
+        n_caveats = st.selectbox(
+            "Show",
+            options=[5, 10, 15],
+            index=0,
+            key="n_caveats",
+            label_visibility="collapsed",
+            format_func=lambda x: f"Show {x} caveats",
+        )
 
     tab6m, tab1y, tab18m, tab3y = st.tabs(["🟡 Last 6 Months", "🟠 Last 1 Year", "🔵 Last 18 Months", "🟢 Last 3 Years"])
     for tab, period_key in zip([tab6m, tab1y, tab18m, tab3y], ["6 Months", "1 Year", "18 Months", "3 Years"]):
@@ -799,7 +846,7 @@ if st.session_state.get("val_ready"):
                 final_attrs["Planning Area"],
                 final_attrs["Market segment"],
                 area_sqft,
-                n=5,
+                n=n_caveats,
             )
             if comps.empty:
                 st.info("No comparable transactions found for this period.")
