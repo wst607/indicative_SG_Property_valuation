@@ -632,7 +632,6 @@ if run_btn:
     sale_quarter = (sale_month - 1) // 3 + 1
     sale_half    = 1 if sale_month <= 6 else 2
 
-    # GLS features for this transaction
     gls_feat = get_gls_features(
         sale_year, sale_half,
         final_attrs["Market segment"],
@@ -640,7 +639,6 @@ if run_btn:
         gls_data
     )
 
-    # Compute property age
     completion_yr = final_attrs.get("Completion Year", sale_year)
     prop_age = max(0, min(60, sale_year - int(completion_yr))) if completion_yr else 0
 
@@ -659,29 +657,61 @@ if run_btn:
         "Sale Quarter"              : sale_quarter,
         "Floor Level"               : floor_level,
         "Property Age (Years)"      : prop_age,
-        # Location features (0 if enrichment not yet run)
         "MRT Distance (km)"         : loc_features.get("MRT Distance (km)", 0),
         "Top School Distance (km)"  : loc_features.get("Top School Distance (km)", 0),
         "Top School 1km"            : loc_features.get("Top School 1km", 0),
         "Top School 2km"            : loc_features.get("Top School 2km", 0),
     }
 
-    # Route to correct model set based on sale type
     MODEL_FILES = get_model_files(type_of_sale)
 
-    # Run all 4 models
     with st.spinner("Running all 4 models…"):
         results_all = {}
         for period in ["6 Months", "1 Year", "18 Months", "3 Years"]:
             psf, lo, hi = predict(period, row)
             results_all[period] = {"psf": psf, "lo": lo, "hi": hi}
 
-    # ── Blended average headline ───────────────────────────────────────────────
-    valid = [r for r in results_all.values() if r["psf"] is not None]
+    valid     = [r for r in results_all.values() if r["psf"] is not None]
     avg_psf   = sum(r["psf"] for r in valid) / len(valid)
     avg_total = avg_psf * area_sqft
     avg_lo    = sum(r["lo"] for r in valid) / len(valid) * area_sqft
     avg_hi    = sum(r["hi"] for r in valid) / len(valid) * area_sqft
+
+    # Save everything to session state so results persist across reruns
+    st.session_state["val_results"]     = results_all
+    st.session_state["val_avg_psf"]     = avg_psf
+    st.session_state["val_avg_total"]   = avg_total
+    st.session_state["val_avg_lo"]      = avg_lo
+    st.session_state["val_avg_hi"]      = avg_hi
+    st.session_state["val_final_attrs"] = final_attrs
+    st.session_state["val_unit_input"]  = unit_input
+    st.session_state["val_floor"]       = floor_level
+    st.session_state["val_area"]        = area_sqft
+    st.session_state["val_prop_age"]    = prop_age
+    st.session_state["val_sale_type"]   = type_of_sale
+    st.session_state["val_sale_year"]   = sale_year
+    st.session_state["val_sale_qtr"]    = sale_quarter
+    st.session_state["val_loc"]         = loc_features
+    st.session_state["val_model_key"]   = get_model_files(type_of_sale)
+    st.session_state["val_ready"]       = True
+
+# ── Display results (persists across reruns via session state) ─────────────────
+if st.session_state.get("val_ready"):
+    results_all  = st.session_state["val_results"]
+    avg_psf      = st.session_state["val_avg_psf"]
+    avg_total    = st.session_state["val_avg_total"]
+    avg_lo       = st.session_state["val_avg_lo"]
+    avg_hi       = st.session_state["val_avg_hi"]
+    final_attrs  = st.session_state["val_final_attrs"]
+    unit_input   = st.session_state["val_unit_input"]
+    floor_level  = st.session_state["val_floor"]
+    area_sqft    = st.session_state["val_area"]
+    prop_age     = st.session_state["val_prop_age"]
+    type_of_sale = st.session_state["val_sale_type"]
+    sale_year    = st.session_state["val_sale_year"]
+    sale_quarter = st.session_state["val_sale_qtr"]
+    loc_features = st.session_state["val_loc"]
+    MODEL_FILES  = st.session_state["val_model_key"]
 
     st.divider()
     model_type_label = "Resale Model" if type_of_sale == "Resale" else "New Sale Model"
@@ -692,7 +722,6 @@ if run_btn:
         f"Age: {prop_age} yrs  |  {model_type_label}"
     )
 
-    # Headline blended value
     st.markdown(
         f"""
         <div style='background:#f0f7f0; border-left:4px solid #2e7d32; border-radius:6px; padding:20px 24px; margin-bottom:16px;'>
@@ -705,7 +734,6 @@ if run_btn:
         unsafe_allow_html=True
     )
 
-    # ── Model breakdown ────────────────────────────────────────────────────────
     st.markdown("**Model Breakdown**")
     col6m, col1y, col18m, col3y = st.columns(4)
     cols   = {"6 Months": col6m, "1 Year": col1y, "18 Months": col18m, "3 Years": col3y}
@@ -734,7 +762,6 @@ if run_btn:
 
     st.divider()
 
-    # ── Property Summary ───────────────────────────────────────────────────────
     st.markdown("**Property Summary**")
     summary = {
         "Project"          : final_attrs["Project Name"],
@@ -757,7 +784,6 @@ if run_btn:
 
     st.divider()
 
-    # ── Comparable Transactions ────────────────────────────────────────────────
     st.subheader("Comparable Transactions")
     st.caption(
         "Most recent transactions used from each training period. "
@@ -780,6 +806,7 @@ if run_btn:
             else:
                 st.dataframe(comps, use_container_width=True, hide_index=True)
 
+    st.divider()
 
     # ── Valuer Feedback ────────────────────────────────────────────────────────
     st.subheader("📋 Valuer Feedback")
@@ -787,19 +814,6 @@ if run_btn:
         "Record a valuer's independent assessment against this model output. "
         "Responses are saved to a shared Google Sheet for tracking and calibration."
     )
-
-    # Store model results in session state so they survive form rerun
-    st.session_state["_fb_avg_total"]   = avg_total
-    st.session_state["_fb_avg_psf"]     = avg_psf
-    st.session_state["_fb_results_all"] = results_all
-    st.session_state["_fb_final_attrs"] = final_attrs
-    st.session_state["_fb_unit_input"]  = unit_input
-    st.session_state["_fb_floor"]       = floor_level
-    st.session_state["_fb_area"]        = area_sqft
-    st.session_state["_fb_prop_age"]    = prop_age
-    st.session_state["_fb_sale_type"]   = type_of_sale
-    st.session_state["_fb_sale_year"]   = sale_year
-    st.session_state["_fb_sale_qtr"]    = sale_quarter
 
     with st.form("valuer_feedback_form"):
         fb_col1, fb_col2 = st.columns(2)
@@ -810,14 +824,12 @@ if run_btn:
                 "Valuer's Assessment (S$)",
                 min_value=100_000, max_value=100_000_000,
                 value=int(avg_total), step=10_000,
-                help="Enter the valuer's independent estimated value in SGD."
             )
         with fb_col2:
             fb_valuation_psf = st.number_input(
                 "Valuer's PSF (S$)",
                 min_value=100, max_value=10_000,
                 value=int(avg_psf), step=10,
-                help="Valuer's assessed price per square foot."
             )
             fb_method = st.selectbox(
                 "Valuation Method",
@@ -835,46 +847,33 @@ if run_btn:
         submitted = st.form_submit_button("Submit Feedback", type="primary")
 
     if submitted:
-        # Read from session state — survives the form rerun
-        _avg_total   = st.session_state.get("_fb_avg_total",   avg_total)
-        _avg_psf     = st.session_state.get("_fb_avg_psf",     avg_psf)
-        _results_all = st.session_state.get("_fb_results_all", results_all)
-        _final_attrs = st.session_state.get("_fb_final_attrs", final_attrs)
-        _unit_input  = st.session_state.get("_fb_unit_input",  unit_input)
-        _floor       = st.session_state.get("_fb_floor",       floor_level)
-        _area        = st.session_state.get("_fb_area",        area_sqft)
-        _prop_age    = st.session_state.get("_fb_prop_age",    prop_age)
-        _sale_type   = st.session_state.get("_fb_sale_type",   type_of_sale)
-        _sale_year   = st.session_state.get("_fb_sale_year",   sale_year)
-        _sale_qtr    = st.session_state.get("_fb_sale_qtr",    sale_quarter)
-
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         record = {
             "Timestamp"              : timestamp,
             "Valuer Name"            : fb_valuer_name,
             "Company"                : fb_valuer_company,
-            "Project"                : _final_attrs["Project Name"],
-            "Unit"                   : _unit_input,
-            "Floor"                  : _floor,
-            "Area (sqft)"            : _area,
-            "Planning Area"          : _final_attrs["Planning Area"],
-            "Market Segment"         : _final_attrs["Market segment"],
-            "Tenure"                 : _final_attrs["Tenure Group"],
-            "Completion Year"        : _final_attrs["Completion Year"],
-            "Property Age (yrs)"     : _prop_age,
-            "Sale Type"              : _sale_type,
-            "Sale Year"              : _sale_year,
-            "Sale Quarter"           : _sale_qtr,
-            "Model Blended (S$)"     : round(_avg_total),
-            "Model PSF (S$)"         : round(_avg_psf),
-            "Model 6m (S$)"          : round(_results_all["6 Months"]["psf"] * _area) if _results_all["6 Months"]["psf"] else "",
-            "Model 1y (S$)"          : round(_results_all["1 Year"]["psf"] * _area)   if _results_all["1 Year"]["psf"]   else "",
-            "Model 18m (S$)"         : round(_results_all["18 Months"]["psf"] * _area) if _results_all["18 Months"]["psf"] else "",
-            "Model 3y (S$)"          : round(_results_all["3 Years"]["psf"] * _area)  if _results_all["3 Years"]["psf"]  else "",
+            "Project"                : final_attrs["Project Name"],
+            "Unit"                   : unit_input,
+            "Floor"                  : floor_level,
+            "Area (sqft)"            : area_sqft,
+            "Planning Area"          : final_attrs["Planning Area"],
+            "Market Segment"         : final_attrs["Market segment"],
+            "Tenure"                 : final_attrs["Tenure Group"],
+            "Completion Year"        : final_attrs["Completion Year"],
+            "Property Age (yrs)"     : prop_age,
+            "Sale Type"              : type_of_sale,
+            "Sale Year"              : sale_year,
+            "Sale Quarter"           : sale_quarter,
+            "Model Blended (S$)"     : round(avg_total),
+            "Model PSF (S$)"         : round(avg_psf),
+            "Model 6m (S$)"          : round(results_all["6 Months"]["psf"] * area_sqft) if results_all["6 Months"]["psf"] else "",
+            "Model 1y (S$)"          : round(results_all["1 Year"]["psf"] * area_sqft)   if results_all["1 Year"]["psf"]   else "",
+            "Model 18m (S$)"         : round(results_all["18 Months"]["psf"] * area_sqft) if results_all["18 Months"]["psf"] else "",
+            "Model 3y (S$)"          : round(results_all["3 Years"]["psf"] * area_sqft)  if results_all["3 Years"]["psf"]  else "",
             "Valuer Assessment (S$)" : fb_valuation,
             "Valuer PSF (S$)"        : fb_valuation_psf,
-            "Diff vs Model (S$)"     : fb_valuation - round(_avg_total),
-            "Diff vs Model (%)"      : round((fb_valuation - _avg_total) / _avg_total * 100, 2),
+            "Diff vs Model (S$)"     : fb_valuation - round(avg_total),
+            "Diff vs Model (%)"      : round((fb_valuation - avg_total) / avg_total * 100, 2),
             "Valuation Method"       : fb_method,
             "Notes"                  : fb_notes,
         }
