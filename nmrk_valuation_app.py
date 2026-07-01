@@ -780,7 +780,6 @@ if run_btn:
             else:
                 st.dataframe(comps, use_container_width=True, hide_index=True)
 
-    st.divider()
 
     # ── Valuer Feedback ────────────────────────────────────────────────────────
     st.subheader("📋 Valuer Feedback")
@@ -789,7 +788,20 @@ if run_btn:
         "Responses are saved to a shared Google Sheet for tracking and calibration."
     )
 
-    with st.form("valuer_feedback_form", clear_on_submit=True):
+    # Store model results in session state so they survive form rerun
+    st.session_state["_fb_avg_total"]   = avg_total
+    st.session_state["_fb_avg_psf"]     = avg_psf
+    st.session_state["_fb_results_all"] = results_all
+    st.session_state["_fb_final_attrs"] = final_attrs
+    st.session_state["_fb_unit_input"]  = unit_input
+    st.session_state["_fb_floor"]       = floor_level
+    st.session_state["_fb_area"]        = area_sqft
+    st.session_state["_fb_prop_age"]    = prop_age
+    st.session_state["_fb_sale_type"]   = type_of_sale
+    st.session_state["_fb_sale_year"]   = sale_year
+    st.session_state["_fb_sale_qtr"]    = sale_quarter
+
+    with st.form("valuer_feedback_form"):
         fb_col1, fb_col2 = st.columns(2)
         with fb_col1:
             fb_valuer_name    = st.text_input("Valuer Name", placeholder="e.g. John Tan")
@@ -813,53 +825,66 @@ if run_btn:
             )
             fb_notes = st.text_area("Notes / Remarks", placeholder="Any adjustments, market commentary, or context…", height=100)
 
-        # Pre-populated context shown to valuer (read-only via disabled inputs)
         st.markdown("**Model Context (auto-filled)**")
         ctx_col1, ctx_col2, ctx_col3, ctx_col4 = st.columns(4)
-        ctx_col1.text_input("Project",        value=final_attrs["Project Name"],      disabled=True)
-        ctx_col2.text_input("Unit",           value=f"{unit_input} (Fl {floor_level})", disabled=True)
-        ctx_col3.text_input("Area (sqft)",    value=str(area_sqft),                   disabled=True)
-        ctx_col4.text_input("Model Output",   value=f"S${avg_total:,.0f}",            disabled=True)
+        ctx_col1.text_input("Project",      value=final_attrs["Project Name"],        disabled=True)
+        ctx_col2.text_input("Unit",         value=f"{unit_input} (Fl {floor_level})", disabled=True)
+        ctx_col3.text_input("Area (sqft)",  value=str(area_sqft),                     disabled=True)
+        ctx_col4.text_input("Model Output", value=f"S${avg_total:,.0f}",              disabled=True)
 
         submitted = st.form_submit_button("Submit Feedback", type="primary")
 
     if submitted:
+        # Read from session state — survives the form rerun
+        _avg_total   = st.session_state.get("_fb_avg_total",   avg_total)
+        _avg_psf     = st.session_state.get("_fb_avg_psf",     avg_psf)
+        _results_all = st.session_state.get("_fb_results_all", results_all)
+        _final_attrs = st.session_state.get("_fb_final_attrs", final_attrs)
+        _unit_input  = st.session_state.get("_fb_unit_input",  unit_input)
+        _floor       = st.session_state.get("_fb_floor",       floor_level)
+        _area        = st.session_state.get("_fb_area",        area_sqft)
+        _prop_age    = st.session_state.get("_fb_prop_age",    prop_age)
+        _sale_type   = st.session_state.get("_fb_sale_type",   type_of_sale)
+        _sale_year   = st.session_state.get("_fb_sale_year",   sale_year)
+        _sale_qtr    = st.session_state.get("_fb_sale_qtr",    sale_quarter)
+
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         record = {
             "Timestamp"              : timestamp,
             "Valuer Name"            : fb_valuer_name,
             "Company"                : fb_valuer_company,
-            "Project"                : final_attrs["Project Name"],
-            "Unit"                   : unit_input,
-            "Floor"                  : floor_level,
-            "Area (sqft)"            : area_sqft,
-            "Planning Area"          : final_attrs["Planning Area"],
-            "Market Segment"         : final_attrs["Market segment"],
-            "Tenure"                 : final_attrs["Tenure Group"],
-            "Completion Year"        : final_attrs["Completion Year"],
-            "Property Age (yrs)"     : prop_age,
-            "Sale Type"              : type_of_sale,
-            "Sale Year"              : sale_year,
-            "Sale Quarter"           : sale_quarter,
-            "Model Blended (S$)"     : round(avg_total),
-            "Model PSF (S$)"         : round(avg_psf),
-            "Model 6m (S$)"          : round(results_all["6 Months"]["psf"] * area_sqft) if results_all["6 Months"]["psf"] else "",
-            "Model 1y (S$)"          : round(results_all["1 Year"]["psf"] * area_sqft)   if results_all["1 Year"]["psf"]   else "",
-            "Model 18m (S$)"         : round(results_all["18 Months"]["psf"] * area_sqft) if results_all["18 Months"]["psf"] else "",
-            "Model 3y (S$)"          : round(results_all["3 Years"]["psf"] * area_sqft)  if results_all["3 Years"]["psf"]  else "",
+            "Project"                : _final_attrs["Project Name"],
+            "Unit"                   : _unit_input,
+            "Floor"                  : _floor,
+            "Area (sqft)"            : _area,
+            "Planning Area"          : _final_attrs["Planning Area"],
+            "Market Segment"         : _final_attrs["Market segment"],
+            "Tenure"                 : _final_attrs["Tenure Group"],
+            "Completion Year"        : _final_attrs["Completion Year"],
+            "Property Age (yrs)"     : _prop_age,
+            "Sale Type"              : _sale_type,
+            "Sale Year"              : _sale_year,
+            "Sale Quarter"           : _sale_qtr,
+            "Model Blended (S$)"     : round(_avg_total),
+            "Model PSF (S$)"         : round(_avg_psf),
+            "Model 6m (S$)"          : round(_results_all["6 Months"]["psf"] * _area) if _results_all["6 Months"]["psf"] else "",
+            "Model 1y (S$)"          : round(_results_all["1 Year"]["psf"] * _area)   if _results_all["1 Year"]["psf"]   else "",
+            "Model 18m (S$)"         : round(_results_all["18 Months"]["psf"] * _area) if _results_all["18 Months"]["psf"] else "",
+            "Model 3y (S$)"          : round(_results_all["3 Years"]["psf"] * _area)  if _results_all["3 Years"]["psf"]  else "",
             "Valuer Assessment (S$)" : fb_valuation,
             "Valuer PSF (S$)"        : fb_valuation_psf,
-            "Diff vs Model (S$)"     : fb_valuation - round(avg_total),
-            "Diff vs Model (%)"      : round((fb_valuation - avg_total) / avg_total * 100, 2),
+            "Diff vs Model (S$)"     : fb_valuation - round(_avg_total),
+            "Diff vs Model (%)"      : round((fb_valuation - _avg_total) / _avg_total * 100, 2),
             "Valuation Method"       : fb_method,
             "Notes"                  : fb_notes,
         }
-        ok, msg = write_feedback_to_sheets(record)
+        with st.spinner("Saving to Google Sheets…"):
+            ok, msg = write_feedback_to_sheets(record)
         if ok:
             st.success(f"✅ {msg}")
+            st.balloons()
         else:
             st.error(f"⚠️ {msg}")
-            # Fallback: show the record so it can be manually copied
             with st.expander("Copy this record manually"):
                 st.json(record)
 
