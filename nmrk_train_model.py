@@ -248,21 +248,24 @@ print()
 try:
     from dateutil.relativedelta import relativedelta
     cutoffs = {
-        "6m": latest_date - relativedelta(months=6),
-        "1y": latest_date - relativedelta(years=1),
-        "3y": latest_date - relativedelta(years=3),
+        "6m" : latest_date - relativedelta(months=6),
+        "1y" : latest_date - relativedelta(years=1),
+        "18m": latest_date - relativedelta(months=18),
+        "3y" : latest_date - relativedelta(years=3),
     }
 except ImportError:
     cutoffs = {
-        "6m": latest_date - pd.DateOffset(months=6),
-        "1y": latest_date - pd.DateOffset(years=1),
-        "3y": latest_date - pd.DateOffset(years=3),
+        "6m" : latest_date - pd.DateOffset(months=6),
+        "1y" : latest_date - pd.DateOffset(years=1),
+        "18m": latest_date - pd.DateOffset(months=18),
+        "3y" : latest_date - pd.DateOffset(years=3),
     }
 
 labels = {
-    "6m": "Last 6 Months",
-    "1y": "Last 1 Year",
-    "3y": "Last 3 Years",
+    "6m" : "Last 6 Months",
+    "1y" : "Last 1 Year",
+    "18m": "Last 18 Months",
+    "3y" : "Last 3 Years",
 }
 
 CAT_COLS = [
@@ -314,7 +317,7 @@ for period, cutoff in cutoffs.items():
     # Train
     print(f"  Training model …", end=" ", flush=True)
     rf = RandomForestRegressor(
-        n_estimators=100, 
+        n_estimators=100,
         max_depth=12,
         min_samples_leaf=3,
         n_jobs=-1,
@@ -400,7 +403,7 @@ print("  GLS features added:")
 for f in GLS_FEATURES:
     print(f"    • {f}")
 print()
-print("  Recommendation: use the 3-year model (best accuracy + recency)")
+print("  Recommendation: use the blended average of all 4 models in the app")
 print()
 print("  Next step:")
 print("    streamlit run nmrk_valuation_app.py")
