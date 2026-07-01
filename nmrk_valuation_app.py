@@ -415,18 +415,6 @@ def write_feedback_to_sheets(record: dict) -> tuple[bool, str]:
     """
     Appends one row to the Google Sheet configured in st.secrets.
     Returns (success: bool, message: str).
-    Requires st.secrets:
-        [gsheets]
-        spreadsheet_id = "..."
-        [gcp_service_account]
-        type = "service_account"
-        project_id = "..."
-        private_key_id = "..."
-        private_key = "..."
-        client_email = "..."
-        client_id = "..."
-        auth_uri = "..."
-        token_uri = "..."
     """
     try:
         import gspread
@@ -438,11 +426,10 @@ def write_feedback_to_sheets(record: dict) -> tuple[bool, str]:
         secrets = st.secrets
         creds_dict = dict(secrets["gcp_service_account"])
         spreadsheet_id = secrets["gsheets"]["spreadsheet_id"]
-    except Exception:
-        return False, (
-            "Google Sheets not configured. Add your service account credentials "
-            "to .streamlit/secrets.toml (see setup instructions)."
-        )
+    except KeyError as e:
+        return False, f"Secrets missing key: {e}. Check Streamlit Cloud Secrets panel."
+    except Exception as e:
+        return False, f"Could not read secrets: {e}"
 
     try:
         scopes = [
@@ -454,14 +441,17 @@ def write_feedback_to_sheets(record: dict) -> tuple[bool, str]:
         sheet  = client.open_by_key(spreadsheet_id).sheet1
 
         # Write header row if sheet is empty
-        if sheet.row_count == 0 or not sheet.get_all_values():
+        existing = sheet.get_all_values()
+        if not existing:
             headers = list(record.keys())
             sheet.append_row(headers, value_input_option="USER_ENTERED")
 
         sheet.append_row(list(record.values()), value_input_option="USER_ENTERED")
         return True, "Feedback recorded successfully."
+    except gspread.exceptions.APIError as e:
+        return False, f"Google Sheets API error: {e.response.status_code} — {e.response.text}"
     except Exception as e:
-        return False, f"Failed to write to Google Sheets: {e}"
+        return False, f"Failed to write to Google Sheets: {type(e).__name__}: {e}"
 
 # ── Check files ────────────────────────────────────────────────────────────────
 
