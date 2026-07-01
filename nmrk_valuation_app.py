@@ -535,7 +535,6 @@ if run_btn:
         "Type of Sale"               : type_of_sale,
         "Type of Area"               : "Strata",
         "Property Type"              : final_attrs["Property Type"],
-        "Purchaser Address Indicator": "Private",
         "Planning Region"            : final_attrs["Planning Region"],
         "Planning Area"              : final_attrs["Planning Area"],
         "Market segment"             : final_attrs["Market segment"],
@@ -550,11 +549,7 @@ if run_btn:
         "Top School Distance (km)"   : loc_features.get("Top School Distance (km)", 0),
         "Top School 1km"             : loc_features.get("Top School 1km", 0),
         "Top School 2km"             : loc_features.get("Top School 2km", 0),
-        # GLS pipeline features
-        "GLS Sites Segment"          : gls_feat["GLS Sites Segment"],
-        "GLS Units Segment"          : gls_feat["GLS Units Segment"],
-        "GLS Units Area"             : gls_feat["GLS Units Area"],
-        "GLS Avg psf ppr Segment"    : gls_feat["GLS Avg psf ppr Segment"],
+        # GLS features removed from model — used for display context only
     }
 
     # Run all 4 models
