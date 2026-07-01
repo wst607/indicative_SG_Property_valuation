@@ -230,8 +230,12 @@ segment_labels = {
 }
 
 # ── Model feature columns ──────────────────────────────────────────────────────
+# Project Name uses TARGET ENCODING (median PSF per project) instead of label
+# encoding — this preserves the pricing signal for luxury outliers like
+# Ardmore Park, Nassim Hill etc. that sit far above their segment average.
 CAT_COLS = [
-    "Project Name", "Type of Area", "Property Type",
+    # Project Name intentionally excluded from label-encoded cols — target encoded below
+    "Type of Area", "Property Type",
     "Planning Region", "Planning Area",
     "Market segment", "Tenure Group", "Completion Bucket",
     # Type of Sale intentionally excluded — redundant in segmented models
@@ -272,32 +276,78 @@ for sale_key, sale_types in SALE_SEGMENTS.items():
             print(f"  ⚠  Too few rows ({len(df)}) — skipping this combination.")
             continue
 
-        # Label encode
+        # ── 40 / 30 / 30 split (done before encoding to prevent leakage) ───────
+        # We split first so target encoding is fitted on train set only
+        from sklearn.model_selection import train_test_split as _tts
+        df_train_raw, df_temp_raw = _tts(df, test_size=0.60, random_state=42)
+        df_val_raw,   df_test_raw = _tts(df_temp_raw, test_size=0.50, random_state=42)
+
+        # ── Target encode Project Name on train set ───────────────────────────
+        # global fallback = overall median PSF in training slice
+        global_median = float(df_train_raw[TARGET].median())
+        project_te_map = (
+            df_train_raw.groupby("Project Name")[TARGET]
+            .median()
+            .to_dict()
+        )
+        # Save the map so the app can look up project PSF at prediction time
+        te_path = OUTPUT_DIR / f"project_te_{sale_key}_{period}.json"
+        with open(te_path, "w") as f:
+            json.dump({"map": project_te_map, "global_median": global_median}, f)
+        print(f"  Target encoding map: {len(project_te_map):,} projects  |  global median S${global_median:.0f} psf")
+
+        def apply_te(df_slice):
+            df_out = df_slice.copy()
+            df_out["Project Name TE"] = (
+                df_out["Project Name"]
+                .fillna("Unknown")
+                .astype(str)
+                .map(project_te_map)
+                .fillna(global_median)
+            )
+            df_out = df_out.drop(columns=["Project Name"], errors="ignore")
+            return df_out
+
+        df_train_raw = apply_te(df_train_raw)
+        df_val_raw   = apply_te(df_val_raw)
+        df_test_raw  = apply_te(df_test_raw)
+
+        # ── Label encode remaining CAT_COLS ───────────────────────────────────
         le_dict = {}
-        df_enc  = df.copy()
+        df_enc_train = df_train_raw.copy()
+        df_enc_val   = df_val_raw.copy()
+        df_enc_test  = df_test_raw.copy()
+
         for col in CAT_COLS:
-            if col not in df_enc.columns:
+            if col not in df_enc_train.columns:
                 continue
-            df_enc[col] = df_enc[col].fillna("Unknown").astype(str)
+            df_enc_train[col] = df_enc_train[col].fillna("Unknown").astype(str)
             le = LabelEncoder()
-            df_enc[col] = le.fit_transform(df_enc[col])
+            df_enc_train[col] = le.fit_transform(df_enc_train[col])
             le_dict[col] = le
+            # Apply same encoder to val/test — unseen labels → "Unknown" → 0
+            for df_slice in [df_enc_val, df_enc_test]:
+                df_slice[col] = df_slice[col].fillna("Unknown").astype(str)
+                known = set(le.classes_)
+                df_slice[col] = df_slice[col].apply(
+                    lambda x: x if x in known else ("Unknown" if "Unknown" in known else le.classes_[0])
+                )
+                df_slice[col] = le.transform(df_slice[col])
 
         # Fill missing location features
         for col in EXTRA_FEATURES:
-            if col in df_enc.columns:
-                df_enc[col] = df_enc[col].fillna(df_enc[col].median())
+            for df_slice in [df_enc_train, df_enc_val, df_enc_test]:
+                if col in df_slice.columns:
+                    df_slice[col] = df_slice[col].fillna(df_enc_train[col].median() if col in df_enc_train.columns else 0)
 
-        feature_cols = [c for c in df_enc.columns if c != TARGET]
-        X, y = df_enc[feature_cols], df_enc[TARGET]
+        feature_cols = [c for c in df_enc_train.columns if c != TARGET]
 
-        # ── 40 / 30 / 30 split ────────────────────────────────────────────────
-        X_train, X_temp, y_train, y_temp = train_test_split(
-            X, y, test_size=0.60, random_state=42
-        )
-        X_val, X_test, y_val, y_test = train_test_split(
-            X_temp, y_temp, test_size=0.50, random_state=42
-        )
+        X_train = df_enc_train[feature_cols]
+        y_train = df_enc_train[TARGET]
+        X_val   = df_enc_val[feature_cols]
+        y_val   = df_enc_val[TARGET]
+        X_test  = df_enc_test[feature_cols]
+        y_test  = df_enc_test[TARGET]
         print(f"  Split → Train: {len(X_train):,}  |  Val: {len(X_val):,}  |  Test: {len(X_test):,}")
 
         # ── Train ──────────────────────────────────────────────────────────────
@@ -397,11 +447,17 @@ for r in results_summary:
           f"{r['Test R²']:<9} {r['MAE']:<11} {r['MAPE']:<8} {r['Gap']:<6}{flag}")
 
 print()
-print("  Output files (8 models × pkl + le_dict + feature_cols + predictions + comparables):")
-print("    rf_model_resale_6m.pkl      rf_model_newsale_6m.pkl")
-print("    rf_model_resale_1y.pkl      rf_model_newsale_1y.pkl")
-print("    rf_model_resale_18m.pkl     rf_model_newsale_18m.pkl")
-print("    rf_model_resale_3y.pkl      rf_model_newsale_3y.pkl")
+print("  Output files (8 models × pkl + le_dict + feature_cols + predictions + comparables + project_te):")
+print("    rf_model_resale_6m.pkl       rf_model_newsale_6m.pkl")
+print("    rf_model_resale_1y.pkl       rf_model_newsale_1y.pkl")
+print("    rf_model_resale_18m.pkl      rf_model_newsale_18m.pkl")
+print("    rf_model_resale_3y.pkl       rf_model_newsale_3y.pkl")
+print("    project_te_resale_6m.json    project_te_newsale_6m.json  (+ 1y, 18m, 3y)")
+print()
+print("  Encoding changes:")
+print("    Project Name  — TARGET ENCODED (median PSF per project, train set only)")
+print("                    Luxury outliers (Ardmore Park etc.) now correctly priced")
+print("    All other cats — label encoded as before")
 print()
 print("  New features:")
 print("    + Property Age (Years)  — continuous, r=-0.56 with PSF")
