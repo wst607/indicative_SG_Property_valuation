@@ -49,6 +49,13 @@ MODEL_FILES = {
         "predictions": BASE / "predictions_sample_1y.csv",
         "comparables": BASE / "comparables_1y.csv",
     },
+    "18 Months": {
+        "model"      : BASE / "rf_model_18m.pkl",
+        "encoders"   : BASE / "le_dict_18m.pkl",
+        "features"   : BASE / "feature_cols_18m.json",
+        "predictions": BASE / "predictions_sample_18m.csv",
+        "comparables": BASE / "comparables_18m.csv",
+    },
     "3 Years": {
         "model"      : BASE / "rf_model_3y.pkl",
         "encoders"   : BASE / "le_dict_3y.pkl",
@@ -550,27 +557,48 @@ if run_btn:
         "GLS Avg psf ppr Segment"    : gls_feat["GLS Avg psf ppr Segment"],
     }
 
-    # Run all 3 models
-    with st.spinner("Running all 3 models…"):
+    # Run all 4 models
+    with st.spinner("Running all 4 models…"):
         results_all = {}
-        for period in ["6 Months", "1 Year", "3 Years"]:
+        for period in ["6 Months", "1 Year", "18 Months", "3 Years"]:
             psf, lo, hi = predict(period, row)
             results_all[period] = {"psf": psf, "lo": lo, "hi": hi}
 
-    # ── Results side by side ───────────────────────────────────────────────────
+    # ── Blended average headline ───────────────────────────────────────────────
+    valid = [r for r in results_all.values() if r["psf"] is not None]
+    avg_psf   = sum(r["psf"] for r in valid) / len(valid)
+    avg_total = avg_psf * area_sqft
+    avg_lo    = sum(r["lo"] for r in valid) / len(valid) * area_sqft
+    avg_hi    = sum(r["hi"] for r in valid) / len(valid) * area_sqft
+
     st.divider()
-    st.subheader("Indicative Valuation — All Models")
+    st.subheader("Indicative Valuation")
     st.caption(f"{final_attrs['Project Name']}  |  Unit {unit_input} (Floor {floor_level})  |  {area_sqft:,} sqft  |  {type_of_sale}  |  {sale_year} Q{sale_quarter}")
 
-    col6m, col1y, col3y = st.columns(3)
-    cols   = {"6 Months": col6m, "1 Year": col1y, "3 Years": col3y}
-    colors = {"6 Months": "🟡", "1 Year": "🟠", "3 Years": "🟢"}
-    notes  = {"6 Months": "Most current pricing", "1 Year": "Balanced view", "3 Years": "Recommended — most stable"}
+    # Headline blended value
+    st.markdown(
+        f"""
+        <div style='background:#f0f7f0; border-left:4px solid #2e7d32; border-radius:6px; padding:20px 24px; margin-bottom:16px;'>
+            <div style='font-size:0.85em; color:#555; margin-bottom:4px;'>Blended Indicative Value (Average of 4 Models)</div>
+            <div style='font-size:2.2em; font-weight:700; color:#1a1a1a;'>S${avg_total:,.0f}</div>
+            <div style='font-size:1.1em; color:#444; margin-top:4px;'>S${avg_psf:,.0f} psf</div>
+            <div style='font-size:0.8em; color:#888; margin-top:8px;'>95% CI Total: S${avg_lo:,.0f} – S${avg_hi:,.0f}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # ── Model breakdown ────────────────────────────────────────────────────────
+    st.markdown("**Model Breakdown**")
+    col6m, col1y, col18m, col3y = st.columns(4)
+    cols   = {"6 Months": col6m, "1 Year": col1y, "18 Months": col18m, "3 Years": col3y}
+    colors = {"6 Months": "🟡", "1 Year": "🟠", "18 Months": "🔵", "3 Years": "🟢"}
+    notes  = {"6 Months": "Most current", "1 Year": "Short term", "18 Months": "Balanced", "3 Years": "Long term"}
 
     for period, col in cols.items():
         r = results_all[period]
         with col:
-            st.markdown(f"### {colors[period]} Last {period}")
+            st.markdown(f"#### {colors[period]} Last {period}")
             st.caption(notes[period])
             if r["psf"] is None:
                 st.warning("Model not found")
@@ -578,50 +606,16 @@ if run_btn:
                 total    = r["psf"] * area_sqft
                 lo_total = r["lo"] * area_sqft
                 hi_total = r["hi"] * area_sqft
-                st.metric("Unit Price (PSF)", f"S${r['psf']:,.0f}")
-                st.metric("Total Value",      f"S${total:,.0f}")
+                st.metric("PSF",         f"S${r['psf']:,.0f}")
+                st.metric("Total Value", f"S${total:,.0f}")
                 st.markdown(
-                    f"<div style='font-size:0.8em; color:grey;'>"
-                    f"95% CI PSF: S${r['lo']:,.0f} – S${r['hi']:,.0f}<br>"
-                    f"95% CI Total: S${lo_total:,.0f} – S${hi_total:,.0f}"
+                    f"<div style='font-size:0.75em; color:grey;'>"
+                    f"95% CI: S${lo_total:,.0f} – S${hi_total:,.0f}"
                     f"</div>",
                     unsafe_allow_html=True
                 )
 
     st.divider()
-
-    # ── GLS Supply Context ─────────────────────────────────────────────────────
-    if gls_data is not None:
-        st.markdown("**GLS Supply Context (used in model)**")
-        g1, g2, g3, g4 = st.columns(4)
-        g1.metric("GLS Sites in Pipeline", f"{int(gls_feat['GLS Sites Segment'])}",
-                  help="Residential GLS sites awarded in last 18 months in this segment")
-        g2.metric("Est. Units in Pipeline", f"{int(gls_feat['GLS Units Segment']):,}",
-                  help="Total estimated dwelling units from those sites")
-        g3.metric("Area Pipeline Units", f"{int(gls_feat['GLS Units Area']):,}",
-                  help="Estimated units in this planning area specifically")
-        g4.metric("Avg Land Cost (psf ppr)", f"S${gls_feat['GLS Avg psf ppr Segment']:,.0f}",
-                  help="Average land psf per plot ratio — signal of developer cost expectations")
-
-        # Interpretation
-        units = int(gls_feat["GLS Units Segment"])
-        if units > 3000:
-            st.info(
-                f"⚠️  **High pipeline supply** — {units:,} units coming to market in the {final_attrs['Market segment']} segment. "
-                "This level of new supply can moderate price growth in the near term."
-            )
-        elif units > 1500:
-            st.info(
-                f"📊  **Moderate pipeline supply** — {units:,} units in the {final_attrs['Market segment']} segment. "
-                "Manageable supply; less likely to exert strong downward pressure."
-            )
-        elif units > 0:
-            st.success(
-                f"✅  **Low pipeline supply** — {units:,} units in the {final_attrs['Market segment']} segment. "
-                "Tight supply supports pricing."
-            )
-        else:
-            st.success("✅  No recent GLS pipeline for this segment — supply is tight.")
 
     st.divider()
 
@@ -643,14 +637,6 @@ if run_btn:
         summary["Nearest Top School"] = f"{loc_features['Nearest Top School']} ({loc_features['Top School Distance (km)']:.2f} km)"
     st.table(pd.DataFrame(summary.items(), columns=["", "Value"]).set_index(""))
 
-    # PSF comparison bar chart
-    st.markdown("**PSF Comparison Across Models**")
-    chart_data = pd.DataFrame({
-        "Model"  : ["Last 6 Months", "Last 1 Year", "Last 3 Years"],
-        "PSF (S$)": [results_all["6 Months"]["psf"], results_all["1 Year"]["psf"], results_all["3 Years"]["psf"]],
-    }).set_index("Model")
-    st.bar_chart(chart_data)
-
     st.divider()
 
     # ── Comparable Transactions ────────────────────────────────────────────────
@@ -660,8 +646,8 @@ if run_btn:
         "Prioritised by: same project → same area + similar size → same segment."
     )
 
-    tab6m, tab1y, tab3y = st.tabs(["🟡 Last 6 Months", "🟠 Last 1 Year", "🟢 Last 3 Years"])
-    for tab, period_key in zip([tab6m, tab1y, tab3y], ["6 Months", "1 Year", "3 Years"]):
+    tab6m, tab1y, tab18m, tab3y = st.tabs(["🟡 Last 6 Months", "🟠 Last 1 Year", "🔵 Last 18 Months", "🟢 Last 3 Years"])
+    for tab, period_key in zip([tab6m, tab1y, tab18m, tab3y], ["6 Months", "1 Year", "18 Months", "3 Years"]):
         with tab:
             comps = get_comparables(
                 period_key,
