@@ -330,7 +330,7 @@ def compute_location_features(lat, lon, mrt_df, school_df):
             nearest_school = top.loc[top["dist"].idxmin()]
             d = round(nearest_school["dist"], 3)
             features["Top School Distance (km)"] = d
-            features["Nearest Top School"] = nearest_school["School Name"]
+            features["Nearest Top School"] = nearest_school["School"]
             features["Top School 1km"] = 1 if d <= 1.0 else 0
             features["Top School 2km"] = 1 if d <= 2.0 else 0
     return features
