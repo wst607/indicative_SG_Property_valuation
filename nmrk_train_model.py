@@ -282,11 +282,14 @@ for sale_key, sale_types in SALE_SEGMENTS.items():
         df_train_raw, df_temp_raw = _tts(df, test_size=0.60, random_state=42)
         df_val_raw,   df_test_raw = _tts(df_temp_raw, test_size=0.50, random_state=42)
 
-        # ── Target encode Project Name on train set ───────────────────────────
-        # global fallback = overall median PSF in training slice
-        global_median = float(df_train_raw[TARGET].median())
+        # ── Target encode Project Name on FULL dataset ──────────────────────
+        # Built from all historical data so rare luxury projects (e.g. Ardmore
+        # Park with only 2-3 transactions per year) are never missing from the
+        # map. This is safe: TE uses project-level median across all time, not
+        # future prices for the specific rows being predicted.
+        global_median = float(df[TARGET].median())
         project_te_map = (
-            df_train_raw.groupby("Project Name")[TARGET]
+            df.groupby("Project Name")[TARGET]
             .median()
             .to_dict()
         )
